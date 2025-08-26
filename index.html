@@ -289,7 +289,107 @@
             <div id="conversationDetails" style="color:#333;font-size:1em;"></div>
         </div>
         <div class="right-panel">
-            <!-- ...[right panel unchanged, omitted for brevity]... -->
+            <div class="upload-section">
+                <input type="file" id="fileInput" class="file-input" accept=".json">
+                <label for="fileInput" class="file-label">
+                    📁 Select ChatGPT Archive JSON File
+                </label>
+                <p style="margin-top: 15px; color: #666;">
+                    Choose your ChatGPT export JSON file. It will be processed locally in your browser.
+                </p>
+            </div>
+            <div class="loading" style="display:none;">
+                <div class="spinner"></div>
+                <p>Processing your ChatGPT archive...</p>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+            </div>
+            <div class="stats" style="display:none;">
+                <h3 style="margin-bottom: 15px; color: #333;">📊 Archive Statistics</h3>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-number" id="totalConversations">0</div>
+                        <div class="stat-label">Total Conversations</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number" id="totalMessages">0</div>
+                        <div class="stat-label">Total Messages</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number" id="dateRange">-</div>
+                        <div class="stat-label">Date Range</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number" id="avgMessages">0</div>
+                        <div class="stat-label">Avg Messages/Chat</div>
+                    </div>
+                </div>
+            </div>
+            <div class="controls" style="display:none;">
+                <h3 style="margin-bottom: 15px; color: #333;">🔍 Search & Filter</h3>
+                <div class="control-row">
+                    <div class="control-group">
+                        <label for="searchTerm">Search text:</label>
+                        <input type="text" id="searchTerm" placeholder="Search in titles and content...">
+                    </div>
+                    <div class="control-group">
+                        <label for="searchIn">Search in:</label>
+                        <select id="searchIn">
+                            <option value="both">Title & Content</option>
+                            <option value="title">Title only</option>
+                            <option value="content">Content only</option>
+                            <option value="user">User messages only</option>
+                            <option value="assistant">Assistant messages only</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="control-row">
+                    <div class="control-group">
+                        <label for="dateFrom">From date:</label>
+                        <input type="date" id="dateFrom">
+                    </div>
+                    <div class="control-group">
+                        <label for="dateTo">To date:</label>
+                        <input type="date" id="dateTo">
+                    </div>
+                    <div class="control-group">
+                        <label for="sortBy">Sort by:</label>
+                        <select id="sortBy">
+                            <option value="newest">Newest First</option>
+                            <option value="oldest">Oldest First</option>
+                            <option value="title">Title A-Z</option>
+                            <option value="messages">Most Messages</option>
+                            <option value="relevance">Search Relevance</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label>
+                            <input type="checkbox" id="caseSensitive"> Case sensitive
+                        </label>
+                    </div>
+                </div>
+                <div class="control-row">
+                    <button class="button" onclick="applyFilters()">🔍 Search & Filter</button>
+                    <button class="button secondary" onclick="clearFilters()">🗑️ Clear</button>
+                    <button class="button secondary" onclick="showExportOptions()">📤 Export</button>
+                </div>
+            </div>
+            <div class="export-options">
+                <h3 style="margin-bottom: 15px; color: #333;">📤 Export Options</h3>
+                <div class="export-buttons">
+                    <button class="button export" onclick="exportAsHTML()">📄 Export as HTML</button>
+                    <button class="button export" onclick="exportAsCSV()">📊 Export as CSV</button>
+                    <button class="button export" onclick="exportAsJSON()">🗂️ Export as JSON</button>
+                    <button class="button export" onclick="exportAsText()">📝 Export as Text</button>
+                </div>
+            </div>
+            <div class="results" style="display:none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h3 style="color: #333;">💬 Conversations (<span id="resultCount">0</span>)</h3>
+                </div>
+                <div id="conversationsList"></div>
+            </div>
         </div>
     </div>
     <script>
@@ -298,8 +398,244 @@
         let currentSearchTerm = '';
         let selectedConversationId = null;
 
-        // ...[other JS unchanged, omitted for brevity]...
+        document.getElementById('fileInput').addEventListener('change', function(event) {
+            const file = event.target.files[0];
+            if (file) {
+                processFile(file);
+            }
+        });
 
+        async function processFile(file) {
+            showLoading(true);
+            try {
+                const text = await file.text();
+                const data = JSON.parse(text);
+                let conversations = [];
+                if (Array.isArray(data)) {
+                    conversations = data;
+                } else if (data.conversations) {
+                    conversations = data.conversations;
+                } else if (data.data) {
+                    conversations = data.data;
+                } else {
+                    for (let key in data) {
+                        if (Array.isArray(data[key]) && data[key].length > 0) {
+                            if (data[key][0].title || data[key][0].conversation_id) {
+                                conversations = data[key];
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (conversations.length === 0) {
+                    throw new Error('No conversations found in the JSON file.');
+                }
+                allConversations = conversations.map((conv, index) => {
+                    if (index % 100 === 0) {
+                        updateProgress((index / conversations.length) * 100);
+                    }
+                    const mapping = conv.mapping || {};
+                    let messages = [];
+                    for (let nodeId in mapping) {
+                        const node = mapping[nodeId];
+                        if (node.message && node.message.content && node.message.content.parts) {
+                            const role = node.message.author ? node.message.author.role : 'unknown';
+                            const content = node.message.content.parts.join(' ');
+                            const timestamp = node.message.create_time || conv.create_time;
+                            if (content.trim()) {
+                                messages.push({
+                                    role: role,
+                                    content: content,
+                                    timestamp: timestamp
+                                });
+                            }
+                        }
+                    }
+                    messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+                    return {
+                        id: conv.conversation_id || conv.id || index,
+                        title: conv.title || `Conversation ${index + 1}`,
+                        create_time: conv.create_time || conv.created_at || Date.now() / 1000,
+                        update_time: conv.update_time || conv.updated_at || Date.now() / 1000,
+                        messages: messages
+                    };
+                });
+                allConversations.sort((a, b) => b.create_time - a.create_time);
+                filteredConversations = [...allConversations];
+                showLoading(false);
+                showStats();
+                showControls();
+                displayConversations();
+            } catch (error) {
+                showLoading(false);
+                alert('Error processing file: ' + error.message);
+            }
+        }
+        function showLoading(show) {
+            document.querySelector('.loading').style.display = show ? 'block' : 'none';
+        }
+        function updateProgress(percent) {
+            document.getElementById('progressFill').style.width = percent + '%';
+        }
+        function showStats() {
+            const totalMessages = allConversations.reduce((sum, conv) => sum + conv.messages.length, 0);
+            const dates = allConversations.map(conv => conv.create_time).filter(d => d);
+            document.getElementById('totalConversations').textContent = allConversations.length;
+            document.getElementById('totalMessages').textContent = totalMessages;
+            document.getElementById('avgMessages').textContent = Math.round(totalMessages / allConversations.length || 0);
+            if (dates.length > 0) {
+                const minDate = Math.min(...dates);
+                const maxDate = Math.max(...dates);
+                const startDate = new Date(minDate * 1000).toLocaleDateString();
+                const endDate = new Date(maxDate * 1000).toLocaleDateString();
+                document.getElementById('dateRange').textContent = `${startDate} - ${endDate}`;
+            }
+            document.querySelector('.stats').style.display = 'block';
+        }
+        function showControls() {
+            document.querySelector('.controls').style.display = 'block';
+        }
+        function highlightText(text, searchTerm, caseSensitive) {
+            if (!searchTerm.trim()) return text;
+            const flags = caseSensitive ? 'g' : 'gi';
+            const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`(${escapedTerm})`, flags);
+            return text.replace(regex, '<span class="search-highlight">$1</span>');
+        }
+        function getSearchRelevance(conv, searchTerm, searchIn, caseSensitive) {
+            if (!searchTerm.trim()) return 0;
+            let score = 0;
+            const term = caseSensitive ? searchTerm : searchTerm.toLowerCase();
+            if ((searchIn === 'both' || searchIn === 'title')) {
+                const title = caseSensitive ? conv.title : conv.title.toLowerCase();
+                const titleMatches = (title.match(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+                score += titleMatches * 10;
+            }
+            if (searchIn === 'both' || searchIn === 'content' || searchIn === 'user' || searchIn === 'assistant') {
+                conv.messages.forEach(msg => {
+                    if (searchIn === 'user' && msg.role !== 'user') return;
+                    if (searchIn === 'assistant' && msg.role !== 'assistant') return;
+                    const content = caseSensitive ? msg.content : msg.content.toLowerCase();
+                    const contentMatches = (content.match(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+                    score += contentMatches;
+                });
+            }
+            return score;
+        }
+        function applyFilters() {
+            const searchTerm = document.getElementById('searchTerm').value.trim();
+            const searchIn = document.getElementById('searchIn').value;
+            const caseSensitive = document.getElementById('caseSensitive').checked;
+            const dateFrom = document.getElementById('dateFrom').value;
+            const dateTo = document.getElementById('dateTo').value;
+            const sortBy = document.getElementById('sortBy').value;
+            currentSearchTerm = searchTerm;
+            let filtered = allConversations.filter(conv => {
+                // Search filter
+                if (searchTerm) {
+                    let found = false;
+                    const term = caseSensitive ? searchTerm : searchTerm.toLowerCase();
+                    if (searchIn === 'both' || searchIn === 'title') {
+                        const title = caseSensitive ? conv.title : conv.title.toLowerCase();
+                        if (title.includes(term)) found = true;
+                    }
+                    if (!found && (searchIn === 'both' || searchIn === 'content' || searchIn === 'user' || searchIn === 'assistant')) {
+                        for (const msg of conv.messages) {
+                            if (searchIn === 'user' && msg.role !== 'user') continue;
+                            if (searchIn === 'assistant' && msg.role !== 'assistant') continue;
+                            const content = caseSensitive ? msg.content : msg.content.toLowerCase();
+                            if (content.includes(term)) {
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!found) return false;
+                }
+                // Date filters
+                const convDate = new Date(conv.create_time * 1000);
+                if (dateFrom && convDate < new Date(dateFrom)) return false;
+                if (dateTo && convDate > new Date(dateTo + 'T23:59:59')) return false;
+                return true;
+            });
+            switch (sortBy) {
+                case 'newest':
+                    filtered.sort((a, b) => b.create_time - a.create_time);
+                    break;
+                case 'oldest':
+                    filtered.sort((a, b) => a.create_time - b.create_time);
+                    break;
+                case 'title':
+                    filtered.sort((a, b) => a.title.localeCompare(b.title));
+                    break;
+                case 'messages':
+                    filtered.sort((a, b) => b.messages.length - a.messages.length);
+                    break;
+                case 'relevance':
+                    if (searchTerm) {
+                        filtered.sort((a, b) => {
+                            const scoreA = getSearchRelevance(a, searchTerm, searchIn, caseSensitive);
+                            const scoreB = getSearchRelevance(b, searchTerm, searchIn, caseSensitive);
+                            return scoreB - scoreA;
+                        });
+                    } else {
+                        filtered.sort((a, b) => b.create_time - a.create_time);
+                    }
+                    break;
+            }
+            filteredConversations = filtered;
+            displayConversations();
+        }
+        function clearFilters() {
+            document.getElementById('searchTerm').value = '';
+            document.getElementById('searchIn').value = 'both';
+            document.getElementById('caseSensitive').checked = false;
+            document.getElementById('dateFrom').value = '';
+            document.getElementById('dateTo').value = '';
+            document.getElementById('sortBy').value = 'newest';
+            currentSearchTerm = '';
+            filteredConversations = [...allConversations];
+            displayConversations();
+        }
+        function displayConversations() {
+            const container = document.getElementById('conversationsList');
+            const resultCount = document.getElementById('resultCount');
+            const searchTerm = currentSearchTerm;
+            const caseSensitive = document.getElementById('caseSensitive')?.checked || false;
+            resultCount.textContent = filteredConversations.length;
+            if (filteredConversations.length === 0) {
+                container.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">No conversations found matching your criteria.</p>';
+            } else {
+                container.innerHTML = filteredConversations.map(conv => {
+                    const date = new Date(conv.create_time * 1000).toLocaleDateString();
+                    const time = new Date(conv.create_time * 1000).toLocaleTimeString();
+                    const messageCount = conv.messages.length;
+                    const userMessages = conv.messages.filter(m => m.role === 'user').length;
+                    const firstUserMessage = conv.messages.find(m => m.role === 'user');
+                    let preview = firstUserMessage ? firstUserMessage.content.substring(0, 200) : 'No user messages found';
+                    const highlightedTitle = highlightText(conv.title, searchTerm, caseSensitive);
+                    const highlightedPreview = highlightText(preview, searchTerm, caseSensitive);
+                    const selectedClass = conv.id === selectedConversationId ? 'selected' : '';
+                    return `
+                        <div class="conversation-item ${selectedClass}" onclick="showConversationDetails('${conv.id}')">
+                            <div class="conversation-header">
+                                <div class="conversation-title">${highlightedTitle}</div>
+                                <div class="conversation-date">${date} ${time}</div>
+                            </div>
+                            <div class="conversation-stats">
+                                <span>💬 ${messageCount} messages</span>
+                                <span>👤 ${userMessages} user messages</span>
+                                ${searchTerm ? `<span>🎯 Score: ${getSearchRelevance(conv, searchTerm, 'both', caseSensitive)}</span>` : ''}
+                            </div>
+                            <div class="conversation-preview">
+                                ${highlightedPreview}${preview.length >= 200 ? '...' : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+            document.querySelector('.results').style.display = 'block';
+        }
         function showConversationDetails(id) {
             selectedConversationId = id;
             displayConversations();
@@ -314,7 +650,7 @@
                 <h2 style="margin-bottom:5px;">${conv.title}</h2>
                 <div style="color:#666;font-size:0.95em;margin-bottom:10px;">${date} &middot; ${conv.messages.length} messages</div>
                 <div>
-                    ${conv.messages.map(msg => ``
+                    ${conv.messages.map(msg => `
                         <div style="margin:15px 0;padding:15px 10px 10px 10px;border-radius:8px;border-left:6px solid ${msg.role==='user'?'#667eea':msg.role==='assistant'?'#fd7e14':'#aaa'};background:#f4f6ff;">
                             <strong style="color:${msg.role==='user'?'#667eea':msg.role==='assistant'?'#fd7e14':'#aaa'};text-transform:capitalize">${msg.role}</strong>
                             <span style="color:#888;font-size:0.9em;float:right;">${msg.timestamp ? new Date(msg.timestamp * 1000).toLocaleString() : ''}</span>
@@ -326,8 +662,90 @@
             `;
             panel.innerHTML = html;
         }
-
-        // ...[rest of JS unchanged, omitted for brevity]...
+        function showExportOptions() {
+            const exportDiv = document.querySelector('.export-options');
+            exportDiv.style.display = exportDiv.style.display === 'block' ? 'none' : 'block';
+        }
+        function downloadFile(content, filename, contentType) {
+            const blob = new Blob([content], { type: contentType });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            link.click();
+            URL.revokeObjectURL(url);
+        }
+        function exportAsHTML() {
+            const html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ChatGPT Conversations Export</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .conversation { border: 1px solid #ddd; margin: 20px 0; padding: 20px; border-radius: 8px; }
+        .conversation-header { background: #f5f5f5; padding: 10px; margin: -20px -20px 15px -20px; border-radius: 8px 8px 0 0; }
+        .message { margin: 15px 0; padding: 10px; border-radius: 6px; }
+        .user { background: #e3f2fd; }
+        .assistant { background: #f3e5f5; }
+        .system { background: #fff3e0; }
+        .timestamp { color: #666; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <h1>ChatGPT Conversations Export</h1>
+    <p>Exported on ${new Date().toLocaleString()}</p>
+    <p>Total conversations: ${filteredConversations.length}</p>
+    ${filteredConversations.map(conv => `
+        <div class="conversation">
+            <div class="conversation-header">
+                <h2>${conv.title}</h2>
+                <div class="timestamp">Created: ${new Date(conv.create_time * 1000).toLocaleString()}</div>
+                <div>Messages: ${conv.messages.length}</div>
+            </div>
+            ${conv.messages.map(msg => `
+                <div class="message ${msg.role}">
+                    <strong>${msg.role}:</strong>
+                    <div>${marked.parse(msg.content)}</div>
+                    ${msg.timestamp ? `<div class="timestamp">${new Date(msg.timestamp * 1000).toLocaleString()}</div>` : ''}
+                </div>
+            `).join('')}
+        </div>
+    `).join('')}
+</body>
+</html>`;
+            downloadFile(html, 'chatgpt-conversations.html', 'text/html');
+        }
+        function exportAsCSV() {
+            const csvRows = ['Title,Date,Message Count,User Messages,First User Message'];
+            filteredConversations.forEach(conv => {
+                const date = new Date(conv.create_time * 1000).toLocaleDateString();
+                const messageCount = conv.messages.length;
+                const userMessages = conv.messages.filter(m => m.role === 'user').length;
+                const firstUserMessage = conv.messages.find(m => m.role === 'user')?.content.replace(/"/g, '""') || '';
+                csvRows.push(`"${conv.title.replace(/"/g, '""')}","${date}",${messageCount},${userMessages},"${firstUserMessage.substring(0, 200)}"`);
+            });
+            downloadFile(csvRows.join('\n'), 'chatgpt-conversations.csv', 'text/csv');
+        }
+        function exportAsJSON() {
+            const exportData = {
+                export_date: new Date().toISOString(),
+                total_conversations: filteredConversations.length,
+                conversations: filteredConversations
+            };
+            downloadFile(JSON.stringify(exportData, null, 2), 'chatgpt-conversations.json', 'application/json');
+        }
+        function exportAsText() {
+            const text = filteredConversations.map(conv => {
+                const date = new Date(conv.create_time * 1000).toLocaleString();
+                const messages = conv.messages.map(msg => {
+                    const timestamp = msg.timestamp ? new Date(msg.timestamp * 1000).toLocaleString() : '';
+                    return `[${msg.role.toUpperCase()}] ${timestamp}\n${msg.content}\n`;
+                }).join('\n');
+                return `CONVERSATION: ${conv.title}\nDATE: ${date}\nMESSAGES: ${conv.messages.length}\n\n${messages}\n${'='.repeat(80)}\n\n`;
+            }).join('');
+            downloadFile(text, 'chatgpt-conversations.txt', 'text/plain');
+        }
     </script>
 </body>
 </html>
